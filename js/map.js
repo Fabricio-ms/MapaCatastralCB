@@ -201,23 +201,25 @@ function loadCatastralLayer(map) {
                 // Absolutamente invisible hasta zoom más alto
                 return null;
             } else if (zoom < 13) {  // Aumentado de 12 a 13
-                // Solo puntos para representar parcelas
+                // Solo puntos para representar parcelas (mantiene geometría original)
                 const geometry = feature.getGeometry();
                 const center = ol.extent.getCenter(geometry.getExtent());
                 return new ol.style.Style({
                     image: new ol.style.Circle({
-                        radius: 1,
-                        fill: new ol.style.Fill({ color: '#2E8B57' })
+                        radius: 1.5,  // Ligeramente más grande para mejor visibilidad
+                        fill: new ol.style.Fill({ color: '#2E8B57' }),
+                        stroke: new ol.style.Stroke({ color: '#1a5d3a', width: 0.5 })
                     }),
-                    geometry: new ol.geom.Point(center)
+                    geometry: new ol.geom.Point(center)  // Solo cambia visualización, no datos
                 });
             } else if (zoom < 14) {  // Aumentado de 13 a 14
-                // Bordes ultra-simplificados
+                // Bordes ultra-delgados (geometría original intacta)
                 return new ol.style.Style({
                     stroke: new ol.style.Stroke({
                         color: '#2E8B57',
-                        width: 0.2
-                    })
+                        width: 0.3  // Ligeramente más grueso para visibilidad
+                    }),
+                    fill: null  // Sin relleno para mejor performance
                 });
             } else if (zoom < 16) {  // Aumentado de 15 a 16
                 // Bordes delgados, sin relleno
@@ -233,22 +235,26 @@ function loadCatastralLayer(map) {
             }
         },
         zIndex: 10,
-        // Optimizaciones EXTREMAS de renderizado
-        renderBuffer: 5,  // Reducido drásticamente de 10 a 5
+        // Optimizaciones EXTREMAS de renderizado (SIN modificar geometrías originales)
+        renderBuffer: 2,  // Reducido aún más para mínima carga
         updateWhileAnimating: false,
         updateWhileInteracting: false,
         // Zoom mínimo ULTRA-restrictivo
         minZoom: 12,  // Aumentado de 11 a 12
         maxZoom: 22,
-        // Optimizaciones MÁXIMAS anti-lag
-        declutter: false,  // Cambiado a false para mejor performance
-        renderMode: 'image',  // Cambiado de vector a image para mejor performance
+        // Optimizaciones MÁXIMAS anti-lag que preservan datos originales
+        declutter: false,  // Mejor performance sin alterar geometrías
+        renderMode: 'image',  // Render como imagen para mejor performance
         // Throttling de renderizado ULTRA-agresivo
         renderOrder: null,  // Desactivar ordenamiento para mejor performance
-        // Optimización de memoria
+        // Optimización de memoria CRÍTICA
         extent: costaRicaExtent,  // Limitar extensión
-        // Configuración de feature loading
-        useSpatialIndex: true
+        // Configuración de feature loading optimizada
+        useSpatialIndex: true,
+        // NUEVA: Limitar features por tile para evitar sobrecarga
+        maxFeatures: 100,  // Máximo 100 features por tile
+        // NUEVA: Preload agresivo deshabilitado
+        preload: 0
     });
 
     // Hacer la capa accesible globalmente
@@ -259,6 +265,62 @@ function loadCatastralLayer(map) {
 
     // Agregar la capa al mapa
     map.addLayer(catastralLayer);
+
+    // OPTIMIZACIÓN CRÍTICA: Sistema de renderizado diferido inteligente
+    let renderTimeout;
+    let isRendering = false;
+    
+    // Interceptar cambios de vista para diferir renderizado
+    map.getView().on('change:resolution', function() {
+        if (renderTimeout) clearTimeout(renderTimeout);
+        if (isRendering) return;
+        
+        renderTimeout = setTimeout(() => {
+            isRendering = true;
+            catastralLayer.changed();
+            setTimeout(() => { isRendering = false; }, 500);
+        }, 300); // Esperar 300ms antes de renderizar
+    });
+
+    // Optimización de viewport: Solo renderizar lo visible + pequeño buffer
+    map.on('moveend', function() {
+        const view = map.getView();
+        const zoom = view.getZoom();
+        
+        // Si está en zoom bajo, limpiar features cargadas para liberar memoria
+        if (zoom < 12) {
+            catastralSource.clear();
+        }
+    });
+
+    // OPTIMIZACIÓN CRÍTICA: Gestión inteligente de memoria
+    let featureCache = new Map();
+    let maxCacheSize = 1000; // Máximo 1000 features en memoria
+    
+    catastralSource.on('addfeature', function(event) {
+        const feature = event.feature;
+        const fincaId = feature.get('PRM_FINCA') || feature.get('prm_finca');
+        
+        // Gestión de caché para evitar sobrecarga de memoria
+        if (featureCache.size > maxCacheSize) {
+            // Limpiar las features más antiguas
+            const oldestKey = featureCache.keys().next().value;
+            featureCache.delete(oldestKey);
+        }
+        
+        if (fincaId) {
+            featureCache.set(fincaId, feature);
+        }
+    });
+
+    // Limpieza automática de memoria cada 30 segundos
+    setInterval(() => {
+        const currentZoom = map.getView().getZoom();
+        if (currentZoom < 12 && featureCache.size > 0) {
+            featureCache.clear();
+            console.log('Cache de features limpiado para optimizar memoria');
+        }
+    }, 30000);
 
     // Configurar interacciones optimizadas para la capa catastral
     setupOptimizedCatastralInteractions(map, catastralLayer, highlightStyle);
@@ -535,7 +597,11 @@ function createDistrictFilter(map, catastralSource) {
             catastralSource.getFeatures().forEach(feature => {
                 const district = feature.get('PRM_DISTRITO') || feature.get('prm_distrito');
                 if (district) {
-                    districts.add(district);
+                    const districtNum = parseInt(district);
+                    // Solo incluir distritos del 1 al 6
+                    if (districtNum >= 1 && districtNum <= 6) {
+                        districts.add(district);
+                    }
                 }
             });
 
@@ -585,7 +651,7 @@ function createFincaSearch(map, catastralSource) {
     // Botón para abrir el buscador
     const searchButton = document.createElement('button');
     searchButton.className = 'finca-search-btn';
-    searchButton.innerHTML = '�';
+    searchButton.innerHTML = '🔍'; 
     searchButton.title = 'Buscar Finca';
 
     // Panel de búsqueda (inicialmente oculto)
@@ -720,7 +786,7 @@ function createCoordinateSearch(map) {
     // Botón para abrir el buscador
     const searchButton = document.createElement('button');
     searchButton.className = 'search-toggle-btn';
-    searchButton.innerHTML = '�';
+    searchButton.innerHTML = '📍';
     searchButton.title = 'Buscar por Coordenadas';
 
     // Panel de búsqueda (inicialmente oculto)
