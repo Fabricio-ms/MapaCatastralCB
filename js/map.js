@@ -108,37 +108,50 @@ function createLayerSwitcher(map, baseLayers) {
 
 // Función para cargar la capa catastral con optimizaciones ULTRA anti-lag
 function loadCatastralLayer(map) {
-    // Crear la fuente de datos GeoJSON con optimizaciones MÁXIMAS
+    // Crear la fuente de datos con estrategia balanceada de carga
     const catastralSource = new ol.source.Vector({
         url: 'Data/catastral_completo.geojson',
         format: new ol.format.GeoJSON({
             dataProjection: 'EPSG:4326',
             featureProjection: 'EPSG:8908'
         }),
-        // Estrategia ULTRA-optimizada con lazy loading MÁXIMO
+        // Estrategia ULTRA-CONSERVADORA: Carga mínima sin modificar geometrías
         strategy: function(extent, resolution) {
             const zoom = map.getView().getZoomForResolution(resolution);
             
-            // Sistema de carga escalonada ULTRA-AGRESIVA
-            if (zoom < 12) {  // Aumentado de 11 a 12
-                return []; // Absolutamente nada hasta zoom 12
+            // Sistema de carga ULTRA-RESTRICTIVO para evitar lag
+            if (zoom < 13) {
+                return []; // NO cargar nada hasta zoom 13 - muy restrictivo
             }
             
-            if (zoom < 14) {  // Aumentado de 13 a 14
-                // Carga MUY limitada - solo extent visible muy reducido
-                const reducedExtent = [
-                    extent[0] + (extent[2] - extent[0]) * 0.35,  // Aún más reducido
-                    extent[1] + (extent[3] - extent[1]) * 0.35,
-                    extent[2] - (extent[2] - extent[0]) * 0.35,
-                    extent[3] - (extent[3] - extent[1]) * 0.35
-                ];
-                return [reducedExtent];
+            if (zoom < 15) {
+                // En zoom medio, cargar solo área muy pequeña
+                const factor = 0.3; // Solo 30% del área visible
+                const centerX = (extent[0] + extent[2]) / 2;
+                const centerY = (extent[1] + extent[3]) / 2;
+                const halfWidth = (extent[2] - extent[0]) * factor / 2;
+                const halfHeight = (extent[3] - extent[1]) * factor / 2;
+                
+                return [[
+                    centerX - halfWidth,
+                    centerY - halfHeight,
+                    centerX + halfWidth,
+                    centerY + halfHeight
+                ]];
             }
             
-            // Carga normal solo en zoom MUY cercano
+            // Solo en zoom muy alto cargar área completa
             return [extent];
         },
         wrapX: false
+    });
+
+    // Agregar listener para monitorear carga
+    catastralSource.on('change', function() {
+        if (catastralSource.getState() === 'ready') {
+            const featureCount = catastralSource.getFeatures().length;
+            console.log(`✅ Datos catastrales cargados: ${featureCount} features`);
+        }
     });
 
     // Estilo optimizado para las parcelas catastrales
@@ -196,64 +209,50 @@ function loadCatastralLayer(map) {
                 }
             }
 
-            // Sistema de renderizado ULTRA-ESCALONADO
-            if (zoom < 12) {  // Aumentado de 11 a 12
-                // Absolutamente invisible hasta zoom más alto
-                return null;
-            } else if (zoom < 13) {  // Aumentado de 12 a 13
-                // Solo puntos para representar parcelas (mantiene geometría original)
-                const geometry = feature.getGeometry();
-                const center = ol.extent.getCenter(geometry.getExtent());
-                return new ol.style.Style({
-                    image: new ol.style.Circle({
-                        radius: 1.5,  // Ligeramente más grande para mejor visibilidad
-                        fill: new ol.style.Fill({ color: '#2E8B57' }),
-                        stroke: new ol.style.Stroke({ color: '#1a5d3a', width: 0.5 })
-                    }),
-                    geometry: new ol.geom.Point(center)  // Solo cambia visualización, no datos
-                });
-            } else if (zoom < 14) {  // Aumentado de 13 a 14
-                // Bordes ultra-delgados (geometría original intacta)
+            // Sistema de renderizado CONSERVADOR - preserva geometrías originales
+            if (zoom < 13) {
+                return null; // Invisible hasta zoom 13 (muy restrictivo)
+            } else if (zoom < 14) {
+                // Solo bordes ultra-delgados (geometría original intacta)
                 return new ol.style.Style({
                     stroke: new ol.style.Stroke({
                         color: '#2E8B57',
-                        width: 0.3  // Ligeramente más grueso para visibilidad
-                    }),
-                    fill: null  // Sin relleno para mejor performance
-                });
-            } else if (zoom < 16) {  // Aumentado de 15 a 16
-                // Bordes delgados, sin relleno
-                return new ol.style.Style({
-                    stroke: new ol.style.Stroke({
-                        color: '#2E8B57',
-                        width: 0.6
+                        width: 0.3
                     })
+                    // SIN relleno para máxima performance
+                });
+            } else if (zoom < 16) {
+                // Bordes más visibles pero sin relleno (geometría original)
+                return new ol.style.Style({
+                    stroke: new ol.style.Stroke({
+                        color: '#2E8B57',
+                        width: 0.8
+                    })
+                    // SIN relleno para mejor performance
                 });
             } else {
-                // Estilo completo solo en zoom MUY cercano
+                // Estilo completo solo en zoom MUY cercano (geometría original)
                 return catastralStyle;
             }
         },
         zIndex: 10,
-        // Optimizaciones EXTREMAS de renderizado (SIN modificar geometrías originales)
-        renderBuffer: 2,  // Reducido aún más para mínima carga
-        updateWhileAnimating: false,
-        updateWhileInteracting: false,
-        // Zoom mínimo ULTRA-restrictivo
-        minZoom: 12,  // Aumentado de 11 a 12
+        // Configuración EXTREMA ANTI-LAG (preservando geometrías originales)
+        renderBuffer: 5,   // Buffer mínimo para reducir carga
+        updateWhileAnimating: false,   // NO actualizar durante animaciones
+        updateWhileInteracting: false, // NO actualizar durante interacciones (mouse drag, etc)
+        // Zoom mínimo MUY restrictivo
+        minZoom: 13,  // Aumentado a 13 para máxima restricción
         maxZoom: 22,
-        // Optimizaciones MÁXIMAS anti-lag que preservan datos originales
-        declutter: false,  // Mejor performance sin alterar geometrías
-        renderMode: 'image',  // Render como imagen para mejor performance
-        // Throttling de renderizado ULTRA-agresivo
-        renderOrder: null,  // Desactivar ordenamiento para mejor performance
-        // Optimización de memoria CRÍTICA
-        extent: costaRicaExtent,  // Limitar extensión
-        // Configuración de feature loading optimizada
+        // Optimizaciones MÁXIMAS para fluidez
+        declutter: false,
+        renderMode: 'image',  // Imagen = mejor performance que vector
+        renderOrder: null,    // Sin ordenamiento = más rápido
+        // Limitar severamente para anti-lag
+        extent: costaRicaExtent,
         useSpatialIndex: true,
-        // NUEVA: Limitar features por tile para evitar sobrecarga
-        maxFeatures: 100,  // Máximo 100 features por tile
-        // NUEVA: Preload agresivo deshabilitado
+        // CRÍTICO: Limitar features para evitar sobrecarga
+        maxFeatures: 50,  // Solo 50 features máximo por vez
+        // Sin precarga para evitar lag
         preload: 0
     });
 
@@ -266,61 +265,28 @@ function loadCatastralLayer(map) {
     // Agregar la capa al mapa
     map.addLayer(catastralLayer);
 
-    // OPTIMIZACIÓN CRÍTICA: Sistema de renderizado diferido inteligente
-    let renderTimeout;
-    let isRendering = false;
-    
-    // Interceptar cambios de vista para diferir renderizado
+    // OPTIMIZACIÓN CRÍTICA: Limpiar features no visibles para evitar lag
     map.getView().on('change:resolution', function() {
-        if (renderTimeout) clearTimeout(renderTimeout);
-        if (isRendering) return;
-        
-        renderTimeout = setTimeout(() => {
-            isRendering = true;
-            catastralLayer.changed();
-            setTimeout(() => { isRendering = false; }, 500);
-        }, 300); // Esperar 300ms antes de renderizar
-    });
-
-    // Optimización de viewport: Solo renderizar lo visible + pequeño buffer
-    map.on('moveend', function() {
-        const view = map.getView();
-        const zoom = view.getZoom();
-        
-        // Si está en zoom bajo, limpiar features cargadas para liberar memoria
-        if (zoom < 12) {
+        const zoom = map.getView().getZoom();
+        if (zoom < 13) {
+            // Limpiar todas las features cuando está muy alejado
             catastralSource.clear();
+            console.log('🧹 Features limpiadas para mejorar performance');
         }
     });
 
-    // OPTIMIZACIÓN CRÍTICA: Gestión inteligente de memoria
-    let featureCache = new Map();
-    let maxCacheSize = 1000; // Máximo 1000 features en memoria
-    
-    catastralSource.on('addfeature', function(event) {
-        const feature = event.feature;
-        const fincaId = feature.get('PRM_FINCA') || feature.get('prm_finca');
-        
-        // Gestión de caché para evitar sobrecarga de memoria
-        if (featureCache.size > maxCacheSize) {
-            // Limpiar las features más antiguas
-            const oldestKey = featureCache.keys().next().value;
-            featureCache.delete(oldestKey);
-        }
-        
-        if (fincaId) {
-            featureCache.set(fincaId, feature);
+    // OPTIMIZACIÓN: Limpiar features al mover el mapa cuando está en zoom bajo
+    let moveTimeout;
+    map.on('moveend', function() {
+        const zoom = map.getView().getZoom();
+        if (zoom < 13) {
+            // Usar timeout para evitar limpiezas excesivas
+            if (moveTimeout) clearTimeout(moveTimeout);
+            moveTimeout = setTimeout(() => {
+                catastralSource.clear();
+            }, 1000); // Limpiar 1 segundo después de parar de mover
         }
     });
-
-    // Limpieza automática de memoria cada 30 segundos
-    setInterval(() => {
-        const currentZoom = map.getView().getZoom();
-        if (currentZoom < 12 && featureCache.size > 0) {
-            featureCache.clear();
-            console.log('Cache de features limpiado para optimizar memoria');
-        }
-    }, 30000);
 
     // Configurar interacciones optimizadas para la capa catastral
     setupOptimizedCatastralInteractions(map, catastralLayer, highlightStyle);
@@ -353,14 +319,14 @@ function setupOptimizedCatastralInteractions(map, catastralLayer, highlightStyle
     });
     map.addOverlay(popup);
 
-    // Evento de hover ULTRA-optimizado con throttling máximo
+    // Evento de hover ULTRA-CONSERVADOR para evitar lag
     map.on('pointermove', function(evt) {
         if (evt.dragging) return;
         
-        // Solo activar hover en zooms MUY cercanos
+        // Solo activar hover en zooms EXTREMADAMENTE cercanos
         const currentZoom = map.getView().getZoom();
-        if (currentZoom < 15) {  // Aumentado de 14 a 15
-            // Limpiar hover en zoom alejado
+        if (currentZoom < 16) {  // Aumentado aún más para máxima restricción
+            // Limpiar hover en zoom no tan cercano
             if (selectedFeature) {
                 selectedFeature.setStyle(undefined);
                 selectedFeature = null;
@@ -374,15 +340,15 @@ function setupOptimizedCatastralInteractions(map, catastralLayer, highlightStyle
             clearTimeout(hoverTimeout);
         }
 
-        // Debounce EXTREMO para eliminar completamente el lag
+        // Debounce MÁXIMO para eliminar lag completamente
         hoverTimeout = setTimeout(() => {
             const feature = map.forEachFeatureAtPixel(evt.pixel, function(feature, layer) {
                 if (layer === catastralLayer) {
                     return feature;
                 }
             }, {
-                // Opciones para optimizar al máximo la detección
-                hitTolerance: 1,  // Reducido para mejor performance
+                // Opciones ULTRA-OPTIMIZADAS para máximo performance
+                hitTolerance: 0,  // Sin tolerancia para máxima performance
                 checkWrapped: false,
                 layerFilter: function(layer) {
                     return layer === catastralLayer;
@@ -403,7 +369,7 @@ function setupOptimizedCatastralInteractions(map, catastralLayer, highlightStyle
             }
 
             selectedFeature = feature;
-        }, 200); // Aumentado a 200ms para máximo anti-lag
+        }, 300); // Aumentado a 300ms para MÁXIMO anti-lag
     });
 
     // Evento de click ultra-optimizado con deselección
@@ -1155,7 +1121,7 @@ function createCatastralToggle(map, catastralLayer) {
     toggleContainer.style.right = '10px';
     toggleContainer.style.zIndex = '1000';
 
-    // Botón toggle
+    // Botón toggle simple y eficiente
     const toggleButton = document.createElement('button');
     toggleButton.className = 'catastral-toggle-btn active';
     toggleButton.innerHTML = '🗾';
@@ -1164,7 +1130,7 @@ function createCatastralToggle(map, catastralLayer) {
     // Estado inicial
     let isActive = true;
 
-    // Event listener para toggle
+    // Event listener para toggle SIMPLE
     toggleButton.addEventListener('click', function() {
         isActive = !isActive;
         
@@ -1175,13 +1141,12 @@ function createCatastralToggle(map, catastralLayer) {
             toggleButton.style.backgroundColor = '#27ae60';
             toggleButton.style.color = '#fff';
             toggleButton.title = 'Desactivar Capa Catastral';
-            console.log('Capa catastral activada');
         } else {
             // Desactivar capa catastral
             catastralLayer.setVisible(false);
             toggleButton.classList.remove('active');
-            toggleButton.style.backgroundColor = '#e74c3c';
-            toggleButton.style.color = '#fff';
+            toggleButton.style.backgroundColor = '#fff';
+            toggleButton.style.color = '#333';
             toggleButton.title = 'Activar Capa Catastral';
             
             // Limpiar finca seleccionada al desactivar
@@ -1195,8 +1160,6 @@ function createCatastralToggle(map, catastralLayer) {
             if (popup) {
                 popup.setPosition(undefined);
             }
-            
-            console.log('Capa catastral desactivada');
         }
     });
 
